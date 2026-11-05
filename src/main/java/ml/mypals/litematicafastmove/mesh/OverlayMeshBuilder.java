@@ -10,6 +10,7 @@ import fi.dy.masa.litematica.util.OverlayType;
 import fi.dy.masa.litematica.util.PositionUtils;
 import fi.dy.masa.malilib.util.data.Color4f;
 import fi.dy.masa.malilib.util.game.BlockUtils;
+import ml.mypals.litematicafastmove.util.LitematicaCompat;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.core.BlockPos;
@@ -50,7 +51,7 @@ final class OverlayMeshBuilder {
                                                   Configs.Visuals.RENDER_TRANSLUCENT_INNER_SIDES.getBooleanValue();
     private final boolean overlayCulling = Configs.Visuals.ENABLE_SCHEMATIC_OVERLAY_CULLING.getBooleanValue();
     private final boolean ignoreClientFluids = Configs.Visuals.IGNORE_EXISTING_FLUIDS.getBooleanValue();
-    private final boolean ignoreCropAge = Configs.Visuals.IGNORE_CROP_AGE.getBooleanValue();
+    private final boolean ignoreCropAge = LitematicaCompat.ignoreCropAge();
     private final boolean differentBlocks = Configs.Generic.ENABLE_DIFFERENT_BLOCKS.getBooleanValue();
     private final IgnoreBlockRegistry ignoreBlockRegistry = new IgnoreBlockRegistry();
 
@@ -282,7 +283,7 @@ final class OverlayMeshBuilder {
             }
             return OverlayType.WRONG_BLOCK;
         }
-        if (this.ignoreCropAge && fi.dy.masa.litematica.util.BlockUtils.areStatesEqualIgnoringAge(stateSchematic, stateClient)) {
+        if (this.ignoreCropAge && LitematicaCompat.areStatesEqualIgnoringAge(stateSchematic, stateClient)) {
             return OverlayType.NONE;
         }
         return OverlayType.WRONG_STATE;

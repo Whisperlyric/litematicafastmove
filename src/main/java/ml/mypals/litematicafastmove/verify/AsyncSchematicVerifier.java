@@ -11,6 +11,7 @@ import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.config.ThreadPools;
+import ml.mypals.litematicafastmove.util.LitematicaCompat;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
@@ -72,7 +73,7 @@ public final class AsyncSchematicVerifier {
             this.placement = placement;
             this.accessor = new PlacementBlockAccessor(placement);
             this.rules = new Rules(
-                    Configs.Visuals.IGNORE_CROP_AGE.getBooleanValue(),
+                    LitematicaCompat.ignoreCropAge(),
                     Configs.Visuals.IGNORE_EXISTING_FLUIDS.getBooleanValue(),
                     Configs.Generic.ENABLE_DIFFERENT_BLOCKS.getBooleanValue(),
                     ignoreBlockRegistry != null ? ignoreBlockRegistry : new IgnoreBlockRegistry(),
@@ -135,7 +136,7 @@ public final class AsyncSchematicVerifier {
 
                         boolean differs = stateClient != stateSchematic && (!clientAir || !schematicAir);
                         if (!differs || (rules.ignoreCropAge() &&
-                                         fi.dy.masa.litematica.util.BlockUtils.areStatesEqualIgnoringAge(stateSchematic, stateClient))) {
+                                         LitematicaCompat.areStatesEqualIgnoringAge(stateSchematic, stateClient))) {
                             correct.addTo(stateClient, 1);
                             if (!schematicAir) correctNonAir++;
                             continue;
