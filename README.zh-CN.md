@@ -17,7 +17,7 @@
 
 ## 配置项
 
-所有选项都注入到 Litematica 的配置界面（Generic 页，「--- Litematica Fast Move ---」分组下）。
+所有选项都注入到 Litematica 的配置界面（Generic 页，「--- Litematica Fast Move ---」分组下）。若安装了 ModMenu，也可从 **Mod Menu → Litefastica** 打开同一套选项（可选，未安装不影响模组运行）。
 
 ### 基本
 

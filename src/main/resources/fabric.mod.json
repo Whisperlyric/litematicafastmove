@@ -23,6 +23,9 @@
 		],
 		"client": [
 			"ml.mypals.litematicafastmove.LitematicaFastMoveClient"
+		],
+		"modmenu": [
+			"ml.mypals.litematicafastmove.config.ModMenuIntegration"
 		]
 	},
 	"mixins": [
@@ -35,5 +38,8 @@
 		"fabric-api": "*",
 		"litematica": "*",
 		"emergency_exit": ">=0.1.0"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

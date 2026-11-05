@@ -20,7 +20,7 @@ Supported versions: 26.3 (main branch), 1.21.11, 1.21.8, 1.21.4, 1.21.1, 1.20.6,
 
 ## Configuration
 
-All options are injected into Litematica's configuration screen under the Generic tab, in the `--- Litematica Fast Move ---` section.
+All options are injected into Litematica's configuration screen under the Generic tab, in the `--- Litematica Fast Move ---` section. If ModMenu is installed, the same options are also available from **Mod Menu → Litefastica** (optional; the mod still works without it).
 
 ### Basic
 
