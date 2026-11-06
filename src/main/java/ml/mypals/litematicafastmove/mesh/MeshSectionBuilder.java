@@ -28,6 +28,7 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
@@ -117,8 +118,7 @@ public final class MeshSectionBuilder {
         private final BlockPos buildOrigin;
         private final Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt;
         private final List<PlacementMesh.CpuSection> sections = new ArrayList<>();
-        private final long start = System.nanoTime();
-        private int remaining;
+            private int remaining;
         private boolean failed;
 
         FullBuild(SchematicPlacement placement, int generation, BlockPos buildOrigin, int batches, Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt) {
@@ -143,8 +143,6 @@ public final class MeshSectionBuilder {
                 this.sections.forEach(section -> section.layers().forEach(PlacementMesh.CpuLayer::free));
                 return;
             }
-            LitematicaFastMove.LOGGER.debug("Built detached mesh for '{}' in {} ms ({} sections)",
-                    this.placement.getName(), (System.nanoTime() - this.start) / 1_000_000, this.sections.size());
             this.onBuilt.accept(new PlacementMesh.BuiltPlacementBuffer(this.generation, this.buildOrigin, null, this.sections));
         }
     }
@@ -209,6 +207,9 @@ public final class MeshSectionBuilder {
         FluidModelRendererSchematic fluidRenderer = new FluidModelRendererSchematic(
                 ((BlockModelCacheSchematicAccessor) BlockModelCacheSchematic.INSTANCE).litematicafastmove$fluidStateModelSet());
 
+        // 拖动中把客户端世界当作空的：每个方块都会按"缺失"重建，颜色和管线都走 Litematica 自己那套
+        boolean missingMode = mesh.missingMode;
+        BlockState emptyClientState = Blocks.AIR.defaultBlockState();
         boolean translucent = Configs.Visuals.RENDER_BLOCKS_AS_TRANSLUCENT.getBooleanValue();
         boolean renderFluids = Configs.Visuals.ENABLE_SCHEMATIC_FLUIDS.getBooleanValue();
         boolean renderColliding = Configs.Visuals.RENDER_COLLIDING_SCHEMATIC_BLOCKS.getBooleanValue();
@@ -226,7 +227,7 @@ public final class MeshSectionBuilder {
         EnumMap<OverlayRenderType, BufferBuilder> overlayBuilders = new EnumMap<>(OverlayRenderType.class);
         OverlayMeshBuilder overlay = OverlayMeshBuilder.isEnabled()
                 ? new OverlayMeshBuilder(view,
-                        p -> clientLevel.getBlockState(overlayClientPos.setWithOffset(p, clientDelta)),
+                        p -> missingMode ? emptyClientState : clientLevel.getBlockState(overlayClientPos.setWithOffset(p, clientDelta)),
                         type -> overlayBuilders.computeIfAbsent(type, t -> new BufferBuilder(
                                 overlayAllocators.computeIfAbsent(t, k -> new ByteBufferBuilder(256 * 1024)),
                                 t.getDrawMode(), t.getVertexFormat())))
@@ -267,19 +268,19 @@ public final class MeshSectionBuilder {
                                 pos.set(x, y, z);
                                 BlockState state = view.getBlockState(pos);
                                 clientPos.setWithOffset(pos, clientDelta);
-                                BlockState clientState = clientLevel.getBlockState(clientPos);
+                                BlockState clientState = missingMode ? emptyClientState : clientLevel.getBlockState(clientPos);
                                 boolean schematicAir = state.isAir();
                                 boolean clientAir = clientState.isAir();
 
                                 if (schematicAir && (clientAir || !accessor.isInAnyRegion(x, y, z))) continue;
 
                                 boolean missing = false;
-                                if (!schematicAir && (clientAir || (renderColliding && clientState != state))) {
+                                if (!schematicAir && !missingMode && (clientAir || (renderColliding && clientState != state))) {
                                     tessellate(view, state, pos, blockRenderer, fluidRenderer, blockOutput, fluidOutput, renderFluids);
                                     if (state.hasBlockEntity()) {
                                         blockEntities.add(BlockPos.asLong(x, y, z));
                                     }
-                                    missing = clientAir && state.getRenderShape() == RenderShape.MODEL;
+                                    missing = missingMode || (clientAir && state.getRenderShape() == RenderShape.MODEL);
                                 }
 
                                 if (overlay != null) {
@@ -334,7 +335,7 @@ public final class MeshSectionBuilder {
 
                 // 局部构建时空区段也要返回，用于清除旧网格；有方块但被裁空的区段保留记录
                 if (hasBlocks || !layers.isEmpty() || emitEmpty) {
-                    sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clientEmpty, clip, layers, blockEntities.toLongArray()));
+                    sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clientEmpty, clip, layers, blockEntities.toLongArray(), missingMode));
                 }
             }
         } finally {

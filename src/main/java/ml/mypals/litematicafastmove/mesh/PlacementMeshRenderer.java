@@ -40,7 +40,7 @@ import java.util.Set;
 
 public final class PlacementMeshRenderer {
     private interface SectionVisitor {
-        void visit(PlacementMesh.GpuSection section, double ox, double oy, double oz);
+        void visit(PlacementMesh.GpuSection section, double ox, double oy, double oz, boolean hideOverlay);
     }
 
     private record TranslucentDraw(double distanceSq, PlacementMesh.GpuLayer layer, Vector3f offset) {}
@@ -67,11 +67,13 @@ public final class PlacementMeshRenderer {
         TranslucentSorter sorter = TranslucentSorter.forFrame();
         List<TranslucentDraw> translucentDraws = new ArrayList<>();
 
-        forEachVisibleSection(cameraX, cameraY, cameraZ, true, (section, ox, oy, oz) -> {
+        forEachVisibleSection(cameraX, cameraY, cameraZ, true, (section, ox, oy, oz, hideOverlay) -> {
             Vector3f offset = new Vector3f((float) ox, (float) oy, (float) oz);
 
             for (PlacementMesh.GpuLayer layer : section.layers()) {
                 if (layer.layer() == null || layer.vertexBuffer().isClosed()) continue;
+                // 拖动中旧的 overlay (含旧验证高亮) 先不画，但基础模型照画，保证视距内不缺块
+                if (hideOverlay && layer.overlay() != null) continue;
 
                 if (layer.sort() != null) {
                     sorter.maybeResort(layer, -ox, -oy, -oz);
@@ -118,7 +120,8 @@ public final class PlacementMeshRenderer {
         List<DynamicUniforms.Transform> transforms = new ArrayList<>();
         int[] maxIndexCount = {0};
 
-        forEachVisibleSection(cameraPos.x, cameraPos.y, cameraPos.z, false, (section, ox, oy, oz) -> {
+        forEachVisibleSection(cameraPos.x, cameraPos.y, cameraPos.z, false, (section, ox, oy, oz, hideOverlay) -> {
+            if (hideOverlay) return;
             for (PlacementMesh.GpuLayer layer : section.layers()) {
                 if (layer.overlay() != type || layer.indexCount() <= 0 || layer.vertexBuffer().isClosed()) continue;
 
@@ -175,10 +178,12 @@ public final class PlacementMeshRenderer {
                 if (!fr.isVisible(box)) continue;
             }
 
-            boolean canRebuild = requestClipRebuilds && sameBuild && mesh.uploadingFull == null && PendingMoveTracker.get(placement) == null;
+            boolean pendingMove = PendingMoveTracker.get(placement) != null;
+            boolean canRebuild = requestClipRebuilds && sameBuild && mesh.uploadingFull == null && !pendingMove;
             Set<Long> clipKeys = null;
 
             for (PlacementMesh.GpuSection section : mesh.active.values()) {
+                // 不隐藏任何区段：宁可短暂显示旧内容，也不在视距内留下空洞
                 if (sameBuild) {
                     PlacementMesh.Clip required = LayerRangeClip.compute(range, accessor.minPos, accessor.maxPos, section.origin(), delta);
                     if (required != null && required.isEmpty()) continue;
@@ -197,7 +202,7 @@ public final class PlacementMeshRenderer {
                 if (cx * cx + cz * cz > maxDistanceSq) continue;
                 if (fr != null && !fr.isVisible(new AABB(wx, wy, wz, wx + 16, wy + 16, wz + 16))) continue;
 
-                visitor.visit(section, wx - cameraX, wy - cameraY, wz - cameraZ);
+                visitor.visit(section, wx - cameraX, wy - cameraY, wz - cameraZ, pendingMove && !section.missingOnly());
             }
 
             if (clipKeys != null) {

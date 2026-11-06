@@ -3,6 +3,7 @@ package ml.mypals.litematicafastmove.mixin;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import ml.mypals.litematicafastmove.access.PlacementAccessorRegistry;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
@@ -58,6 +59,8 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
         // 首次加载 (addSchematicPlacement) 不经过这里，开关/旋转/镜像/子区域编辑都走原版路径并重建独立网格。
         if (FastMoveConfig.isFastMoveEnabled() && pureTranslation && FastMoveConfig.shouldDeferCommit(placement)) {
             // chunksPreChange 此刻 = 移动前占据的区块，即 WorldSchematic 中数据实际所在的区块
+            litematicafastmove$clearStaleVerifier(placement);
+            PlacementMeshManager.markPlacementMissing(placement);
             PendingMoveTracker.onMoved(placement, pre.origin(), new HashSet<>(this.chunksPreChange));
             ci.cancel();
             return;
@@ -133,6 +136,8 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
             PendingMoveTracker.endBulkRebuild();
         }
         PlacementMeshManager.markPlacementDirty(placement);
+        // 验证是按绝对坐标算的，投影移动后要重跑一次
+        PlacementMeshManager.scheduleReverify(placement);
     }
 
     @Override
@@ -156,4 +161,13 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
             this.markChunkForRebuild(pos.x(), pos.z());
         }
     }
-}
+
+    // 验证结果 (彩色框) 按绝对坐标绘制，投影一动就停在旧位置。移动期间先清掉，
+    // 落定后由 PlacementMeshManager.scheduleReverify 重跑
+    @Unique
+    private void litematicafastmove$clearStaleVerifier(SchematicPlacement placement) {
+        if (!placement.hasVerifier()) return;
+        SchematicVerifier verifier = placement.getSchematicVerifier();
+        if (verifier == null || verifier.isActive()) return;
+        verifier.reset();
+    }}
