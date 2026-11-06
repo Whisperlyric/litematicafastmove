@@ -197,25 +197,42 @@ public final class PlacementMeshManager {
     }
 
     /**
-     * 投影移到新位置：所有区段都要按新位置重新对照，但只作废"已建好"标记，
-     * 视距内的区段由流式队列在后续帧里逐步重建
+     * 投影落定或内容变化：所有区段都要按新位置重新对照。落定前是按"缺失"建的，
+     * 这里立刻把它们全部排进重扫，而不是等环扫描慢慢发现；重扫完成前画面保持缺失外观，扫到一块换回一块
      */
     public static void markPlacementDirty(SchematicPlacement placement) {
-        if (placement != null && MESHES.containsKey(placement)) {
-            MESHES.get(placement).missingMode = false;
-            DIRTY_PLACEMENTS.add(placement);
+        PlacementMesh mesh = MESHES.get(placement);
+        if (mesh == null) return;
+
+        boolean wasMissing = mesh.missingMode;
+        mesh.missingMode = false;
+        DIRTY_PLACEMENTS.add(placement);
+
+        if (wasMissing) {
+            requeueVisible(mesh);
         }
     }
 
     /**
      * 拖动开始：之后的重建都把客户端世界当作空的，于是每个方块都按 Litematica 的"缺失"样式画出来，
-     * 落定提交时 {@link #markPlacementDirty} 会清掉这个状态并整份重建
+     * 落定提交时 {@link #markPlacementDirty} 会清掉这个状态并重扫
      */
     public static void markPlacementMissing(SchematicPlacement placement) {
         PlacementMesh mesh = MESHES.get(placement);
         // 只在整个拖动的第一次标一次：每次位移都清 refreshed 会让转换进度永远从头开始
         if (mesh == null || mesh.missingMode) return;
         mesh.missingMode = true;
+        // 打断上一次落定后的重扫：排队的和在飞的都丢掉，从头按"缺失"重建
+        mesh.dirty.clear();
+        mesh.inFlight.clear();
+        mesh.inFlightSince.clear();
+        requeueVisible(mesh);
+    }
+
+    /**
+     * 视距内已建好的区段全部重新排队：清掉"已建好"标记，否则 claim 时会直接跳过
+     */
+    private static void requeueVisible(PlacementMesh mesh) {
         mesh.refreshed.clear();
         mesh.dirty.addAll(mesh.active.keySet());
     }
