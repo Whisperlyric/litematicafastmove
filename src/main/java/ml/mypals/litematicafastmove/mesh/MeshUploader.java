@@ -20,9 +20,21 @@ final class MeshUploader {
     private record Completed(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer buffer) {}
 
     private static final class Budget {
-        long bytes = FastMoveConfig.uploadBytesPerFrame();
-        final long deadline = System.nanoTime() + (long) (FastMoveConfig.UPLOAD_MILLIS_PER_FRAME.getDoubleValue() * 1_000_000L);
+        long bytes;
+        final long deadline;
         boolean usedAny;
+
+        Budget() {
+            long millis = (long) (FastMoveConfig.UPLOAD_MILLIS_PER_FRAME.getDoubleValue() * 1_000_000L);
+            long bytes = FastMoveConfig.uploadBytesPerFrame();
+            // 渲染关掉一段时间后恢复：前几帧把上传预算压到 1/4，避免积压的批次一帧全传上去
+            if (resumeFrames > 0) {
+                millis /= 4;
+                bytes /= 4;
+            }
+            this.bytes = bytes;
+            this.deadline = System.nanoTime() + millis;
+        }
 
         boolean hasRemaining() {
             return !this.usedAny || (this.bytes > 0 && System.nanoTime() < this.deadline);
@@ -31,6 +43,8 @@ final class MeshUploader {
 
     private static final Queue<Completed> COMPLETED = new ConcurrentLinkedQueue<>();
     private static final Queue<PlacementMesh> TO_CLOSE = new ConcurrentLinkedQueue<>();
+    private static long lastUploadNanos = System.nanoTime();
+    private static int resumeFrames;
 
     private MeshUploader() {}
 
@@ -42,10 +56,14 @@ final class MeshUploader {
         TO_CLOSE.add(mesh);
     }
 
-    static void processQueues() {
+    static void processQueues(boolean uploadBuffers) {
+        // 关闭也分批：关渲染/关模组时会一次性 dispose 掉整份网格，几千个 buffer 同时关会卡在驱动上
         PlacementMesh closing;
-        while ((closing = TO_CLOSE.poll()) != null) {
-            closing.close();
+        while ((closing = TO_CLOSE.peek()) != null) {
+            if (!closing.closeSome(128)) {
+                break;
+            }
+            TO_CLOSE.poll();
         }
 
         Completed completed;
@@ -56,6 +74,24 @@ final class MeshUploader {
         Budget budget = new Budget();
         Set<Long> blockEntityChunks = new HashSet<>();
 
+        if (uploadBuffers) {
+            long now = System.nanoTime();
+            // 渲染关着的时候没有上传帧，恢复后给几帧缓冲期
+            if (now - lastUploadNanos > 750_000_000L) {
+                resumeFrames = 10;
+            }
+            lastUploadNanos = now;
+            uploadAll(budget, blockEntityChunks);
+            if (resumeFrames > 0) {
+                resumeFrames--;
+            }
+        }
+
+        PlacementBlockEntities.scheduleLitematicaChunks(blockEntityChunks);
+        TranslucentSorter.applyResorted();
+    }
+
+    private static void uploadAll(Budget budget, Set<Long> blockEntityChunks) {
         for (Map.Entry<SchematicPlacement, PlacementMesh> entry : PlacementMeshManager.meshes().entrySet()) {
             if (!budget.hasRemaining()) break;
             SchematicPlacement placement = entry.getKey();
@@ -71,7 +107,19 @@ final class MeshUploader {
 
             PlacementMesh.BuiltPlacementBuffer partial;
             while ((partial = mesh.uploadingPartials.peek()) != null && budget.hasRemaining()) {
-                upload(mesh, partial, budget);
+                try {
+                    upload(mesh, partial, budget);
+                } catch (RuntimeException e) {
+                    // 上传失败 (例如显存分配不出来)：丢掉这一批并释放认领，其余批次照常
+                    mesh.uploadingPartials.poll();
+                    partial.discard();
+                    mesh.release(partial.keys);
+                    if (!mesh.failureLogged) {
+                        mesh.failureLogged = true;
+                        LitematicaFastMove.LOGGER.error("Failed to upload placement mesh for '{}'", placement.getName(), e);
+                    }
+                    continue;
+                }
                 if (!partial.isFullyUploaded()) break;
                 mesh.uploadingPartials.poll();
                 PlacementBlockEntities.update(placement, mesh, partial, blockEntityChunks);
@@ -79,19 +127,21 @@ final class MeshUploader {
                 applyPartial(mesh, partial);
             }
         }
-
-        PlacementBlockEntities.scheduleLitematicaChunks(blockEntityChunks);
-        TranslucentSorter.applyResorted();
     }
 
     private static void accept(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer buffer) {
         if (buffer.generation != mesh.requestedGeneration) {
+            // 被新一代构建取代：丢弃并释放认领，让它重新排队
             buffer.discard();
+            mesh.release(buffer.keys);
         } else if (buffer.isFull()) {
             if (mesh.uploadingFull != null) {
                 mesh.uploadingFull.discard();
             }
             mesh.uploadingFull = buffer;
+        } else if (buffer.pending.isEmpty()) {
+            // 构建失败或被取消，回调的是空缓冲：释放认领，否则这些区段再也不会被提交
+            mesh.release(buffer.keys);
         } else if (mesh.uploadingFull == null && mesh.activeGeneration == buffer.generation) {
             mesh.uploadingPartials.add(buffer);
         } else {
@@ -106,7 +156,6 @@ final class MeshUploader {
         mesh.active.values().forEach(section -> section.closeExcept(full.borrowed));
         mesh.active.clear();
         full.borrowed.clear();
-        mesh.clipRebuildPending.clear();
         for (PlacementMesh.GpuSection section : full.uploaded) {
             mesh.active.put(section.key(), section);
         }
@@ -131,14 +180,20 @@ final class MeshUploader {
         for (long key : partial.keys) {
             PlacementMesh.GpuSection old = mesh.active.remove(key);
             if (old != null) old.closeExcept(partial.borrowed);
-            mesh.clipRebuildPending.remove(key);
         }
         for (PlacementMesh.GpuSection section : partial.uploaded) {
             if (section.hasBlocks() || !section.layers().isEmpty()) {
                 mesh.active.put(section.key(), section);
+                mesh.contentSections.add(section.key());
             } else {
                 section.close();
+                mesh.contentSections.remove(section.key());
             }
+        }
+        // 只有流式网格有认领和"已建好"标记，一次性构建的投影不需要
+        if (mesh.isStreaming()) {
+            mesh.refreshed.addAll(partial.keys);
+            mesh.release(partial.keys);
         }
         partial.uploaded.clear();
         partial.borrowed.clear();

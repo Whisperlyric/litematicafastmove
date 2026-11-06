@@ -2,12 +2,14 @@ package ml.mypals.litematicafastmove.sync;
 
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
+import it.unimi.dsi.fastutil.longs.LongSets;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,8 +29,23 @@ public final class PendingMoveTracker {
 
     private static final Map<SchematicPlacement, MoveState> STATES = new ConcurrentHashMap<>();
     private static final Set<Long> SKIPPED_REBUILDS = ConcurrentHashMap.newKeySet();
-    private static volatile Set<Long> frozenChunks = Set.of();
+    private static volatile LongSet frozenChunks = LongSets.EMPTY_SET;
     private static volatile List<ShiftedBox> shiftedBoxes = List.of();
+    // 批量标记区块重建期间跳过守护线程的任务队列清理：每个区块都扫一遍队列是 O(区块数 × 队列长度)
+    private static final ThreadLocal<int[]> BULK_REBUILD = ThreadLocal.withInitial(() -> new int[1]);
+
+    public static void beginBulkRebuild() {
+        BULK_REBUILD.get()[0]++;
+    }
+
+    public static void endBulkRebuild() {
+        int[] depth = BULK_REBUILD.get();
+        if (depth[0] > 0) depth[0]--;
+    }
+
+    public static boolean inBulkRebuild() {
+        return BULK_REBUILD.get()[0] > 0;
+    }
 
     private record ShiftedBox(int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
                               SchematicPlacement placement, BlockPos baseOrigin) {
@@ -46,9 +63,17 @@ public final class PendingMoveTracker {
     }
 
     public static void onMoved(SchematicPlacement placement, BlockPos baseOrigin, Set<ChunkPos> baseChunks) {
-        MoveState state = STATES.computeIfAbsent(placement, p -> new MoveState(baseOrigin, baseChunks));
+        MoveState state = STATES.get(placement);
+        if (state == null) {
+            // 冻结集合只取决于"哪些投影在移动"和它们的基准区块，与移动了多少次无关：
+            // 只在开始移动时重建一次。以前每次 nudge 都重建，Set.copyOf 在大区块数下是 O(n²)
+            state = new MoveState(baseOrigin, baseChunks);
+            state.lastMoveMs = System.currentTimeMillis();
+            STATES.put(placement, state);
+            rebuildFrozen();
+            return;
+        }
         state.lastMoveMs = System.currentTimeMillis();
-        rebuildFrozen();
     }
 
     public static MoveState remove(SchematicPlacement placement) {
@@ -74,7 +99,7 @@ public final class PendingMoveTracker {
     public static void clear() {
         STATES.clear();
         SKIPPED_REBUILDS.clear();
-        frozenChunks = Set.of();
+        frozenChunks = LongSets.EMPTY_SET;
         shiftedBoxes = List.of();
     }
 
@@ -97,7 +122,7 @@ public final class PendingMoveTracker {
     }
 
     public static boolean isFrozenChunk(int chunkX, int chunkZ) {
-        Set<Long> frozen = frozenChunks;
+        LongSet frozen = frozenChunks;
         return !frozen.isEmpty() && frozen.contains(ChunkPos.pack(chunkX, chunkZ));
     }
 
@@ -117,7 +142,7 @@ public final class PendingMoveTracker {
     }
 
     private static void rebuildFrozen() {
-        Set<Long> frozen = new HashSet<>();
+        LongSet frozen = new LongOpenHashSet();
         List<ShiftedBox> boxes = new ArrayList<>();
 
         STATES.forEach((placement, state) -> {
@@ -138,7 +163,9 @@ public final class PendingMoveTracker {
             }
         });
 
-        frozenChunks = Set.copyOf(frozen);
+        // 直接换引用：LongOpenHashSet 的 contains 是 O(1)。Set.copyOf 会把整份集合转成
+        // ImmutableCollections.SetN，构造时逐个线性探测，区块多的时候是 O(n²)
+        frozenChunks = frozen;
         shiftedBoxes = List.copyOf(boxes);
     }
 }

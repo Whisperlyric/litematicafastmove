@@ -24,7 +24,7 @@ public class FastMoveConfig {
 
     public static final ConfigBoolean ENABLE_FAST_MOVE = new ConfigBoolean("fastMoveEnabled", true, "").apply(KEY);
     public static final ConfigBoolean TAKEOVER_ALL_PLACEMENTS = new ConfigBoolean("fastMoveTakeoverAllPlacements", true, "").apply(KEY);
-    public static final ConfigInteger DETACHED_VOLUME_THRESHOLD = new ConfigInteger("fastMoveLargePlacementVolume", 32 * 32 * 32, 1, Integer.MAX_VALUE, "").apply(KEY);
+    public static final ConfigInteger DETACHED_VOLUME_THRESHOLD = new ConfigInteger("fastMoveLargePlacementVolume", 1_000_000, 1, Integer.MAX_VALUE, "").apply(KEY);
     public static final ConfigBoolean ENABLE_ASYNC_VERIFY = new ConfigBoolean("fastMoveAsyncVerifier", true, "").apply(KEY);
     public static final ConfigInteger COMMIT_DELAY_MS = new ConfigInteger("fastMoveCommitDelay", 1500, 0, 60_000, "").apply(KEY);
     // 移动后先按原位显示这么久；窗口内再次移动会重新计时，因此中间位置不会被渲染
@@ -52,6 +52,15 @@ public class FastMoveConfig {
     public static final ConfigBoolean DEBUG_GIZMOS = new ConfigBoolean("fastMoveDebugGizmos", false, "").apply(KEY);
     public static final ConfigInteger DEBUG_GIZMO_MILLIS = new ConfigInteger("fastMoveDebugGizmoDuration", 800, 50, 10_000, "").apply(KEY);
 
+    // 流式构建：每帧提交的区段数、构建中的区段上限、常驻区段上限 (0 = 不限制，默认)
+    public static final ConfigInteger STREAM_SECTIONS_PER_FRAME = new ConfigInteger("fastMoveStreamSectionsPerFrame", 96, 8, 4096, "").apply(KEY);
+    public static final ConfigInteger STREAM_IN_FLIGHT = new ConfigInteger("fastMoveStreamInFlight", 1024, 64, 65_536, "").apply(KEY);
+    public static final ConfigInteger RESIDENT_SECTION_LIMIT = new ConfigInteger("fastMoveResidentLimit", 0, 0, 1_048_576, "").apply(KEY);
+    // 只对超过"大型投影体积"的投影流式构建 (默认开)；关掉时所有接管的投影都流式
+    public static final ConfigBoolean STREAM_ONLY_LARGE = new ConfigBoolean("fastMoveStreamOnlyLarge", true, "").apply(KEY);
+    // 移动中只重建玩家周围的这一圈 (区块)，松手后再整体按视距补齐；0 = 移动中不重建
+    public static final ConfigInteger MOVE_CORE_CHUNKS = new ConfigInteger("fastMoveMoveCoreChunks", 1, 0, 8, "").apply(KEY);
+
     public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(
             ENABLE_FAST_MOVE,
             TAKEOVER_ALL_PLACEMENTS,
@@ -66,6 +75,11 @@ public class FastMoveConfig {
             TRANSLUCENT_RESORTS_PER_FRAME,
             TRANSLUCENT_RESORT_DISTANCE,
             BUILD_BATCH_SECTIONS,
+            STREAM_SECTIONS_PER_FRAME,
+            STREAM_IN_FLIGHT,
+            RESIDENT_SECTION_LIMIT,
+            STREAM_ONLY_LARGE,
+            MOVE_CORE_CHUNKS,
             VERIFIER_MERGE_MILLIS_PER_TICK,
             MESH_BUILDER_THREADS,
             VERIFIER_THREADS,
@@ -99,6 +113,31 @@ public class FastMoveConfig {
     public static int verifierThreads() {
         int value = VERIFIER_THREADS.getIntegerValue();
         return value > 0 ? value : Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    }
+
+    /** 每帧最多提交构建的区段数，0 为不限制。 */
+    public static int streamSectionsPerFrame() {
+        return STREAM_SECTIONS_PER_FRAME.getIntegerValue();
+    }
+
+    /** 同时在构建线程上的区段上限，用来给构建队列兜一个硬上限。 */
+    public static int streamInFlightSections() {
+        return STREAM_IN_FLIGHT.getIntegerValue();
+    }
+
+    /** 常驻显存的区段上限，0 为不限制。 */
+    public static int residentSectionLimit() {
+        return RESIDENT_SECTION_LIMIT.getIntegerValue();
+    }
+
+    /** 移动中重建玩家周围多少区块内的网格，0 为移动中不重建。 */
+    public static int moveCoreChunks() {
+        return MOVE_CORE_CHUNKS.getIntegerValue();
+    }
+
+    /** 是否只对超过"大型投影体积"的投影流式构建。 */
+    public static boolean streamOnlyLarge() {
+        return STREAM_ONLY_LARGE.getBooleanValue();
     }
 
     public static boolean isRenderTakenOver(SchematicPlacement placement) {

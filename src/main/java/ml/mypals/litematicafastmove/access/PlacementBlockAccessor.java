@@ -68,12 +68,17 @@ public class PlacementBlockAccessor {
                z >= minPos.getZ() && z <= maxPos.getZ();
     }
 
+    // 构建线程每个区段要读 18³ 个方块；每次 new 一个 MutableBlockPos 会产生百万级的临时对象，
+    // 这里按线程复用一个 (同一次调用里不会再嵌套调用 getBlockStateAt)
+    private static final ThreadLocal<BlockPos.MutableBlockPos> LOCAL_POS =
+            ThreadLocal.withInitial(BlockPos.MutableBlockPos::new);
+
     public BlockState getBlockStateAt(int x, int y, int z) {
         if (!isInBoundingBox(x, y, z)) {
             return Blocks.AIR.defaultBlockState();
         }
 
-        BlockPos.MutableBlockPos localPos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos localPos = LOCAL_POS.get();
         for (RegionEntry entry : regions) {
             if (entry.transform.worldToLocal(x, y, z, localPos)) {
                 BlockState state = entry.container.get(localPos.getX(), localPos.getY(), localPos.getZ());

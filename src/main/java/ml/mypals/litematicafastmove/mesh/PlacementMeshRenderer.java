@@ -58,9 +58,10 @@ public final class PlacementMeshRenderer {
                                       Matrix4fc modelView, Vector4fc colorModulator, Matrix4fc textureMatrix,
                                       double cameraX, double cameraY, double cameraZ,
                                       LocalIntRef maxIndexCount) {
-        MeshUploader.processQueues();
+        MeshUploader.processQueues(true);
         if (PlacementMeshManager.meshes().isEmpty()) return false;
         MoveInterpolator.update();
+        PlacementMeshManager.stream(cameraX, cameraY, cameraZ);
 
         boolean[] added = {false};
         TranslucentSorter sorter = TranslucentSorter.forFrame();
@@ -181,8 +182,7 @@ public final class PlacementMeshRenderer {
                 if (sameBuild) {
                     PlacementMesh.Clip required = LayerRangeClip.compute(range, accessor.minPos, accessor.maxPos, section.origin(), delta);
                     if (required != null && required.isEmpty()) continue;
-                    if (canRebuild && (section.hasBlocks() || !section.layers().isEmpty()) && !Objects.equals(required, section.clip()) &&
-                        !mesh.clipRebuildPending.contains(section.key())) {
+                    if (canRebuild && (section.hasBlocks() || !section.layers().isEmpty()) && !Objects.equals(required, section.clip())) {
                         if (clipKeys == null) clipKeys = new HashSet<>();
                         clipKeys.add(section.key());
                     }
@@ -201,8 +201,7 @@ public final class PlacementMeshRenderer {
             }
 
             if (clipKeys != null) {
-                mesh.clipRebuildPending.addAll(clipKeys);
-                PlacementMeshManager.requestPartialBuild(placement, mesh, clipKeys);
+                PlacementMeshManager.markSectionsDirty(mesh, clipKeys);
             }
         }
     }

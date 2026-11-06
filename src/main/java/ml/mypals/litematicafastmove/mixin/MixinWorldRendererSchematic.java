@@ -9,7 +9,6 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.systems.RenderPass;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
 import fi.dy.masa.litematica.render.schematic.WorldRendererSchematic;
-import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshRenderer;
 import ml.mypals.litematicafastmove.sync.PendingMoveTracker;
 import net.minecraft.client.Camera;
@@ -95,9 +94,6 @@ public class MixinWorldRendererSchematic {
     private void captureFrustum(Camera camera, Frustum frustum, int frameCount, boolean playerSpectator, ProfilerFiller profiler, CallbackInfo ci) {
         PlacementMeshRenderer.captureFrustum(frustum);
     }
-
-    @Inject(method = "loadRenderers", at = @At("RETURN"))
-    private void onLoadRenderers(ProfilerFiller profiler, CallbackInfo ci) {
-        PlacementMeshManager.rebuildAll();
-    }
+    // 原版重建区块渲染器 (渲染开关、渲染距离、资源包) 不影响我们的网格：不在这里整份重建，
+    // 否则开关一次渲染就要把所有投影重新提交一遍，明显卡一下
 }

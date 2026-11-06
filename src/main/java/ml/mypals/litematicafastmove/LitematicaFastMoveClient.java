@@ -21,7 +21,6 @@ public class LitematicaFastMoveClient implements ClientModInitializer {
             SchematicPlacementManager manager = DataManager.getSchematicPlacementManager();
             if (manager == null) return;
             ((IFastMoveManager) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
-
             PlacementMeshManager.processDirty();
 
             if (++ticks % 10 == 0) {
