@@ -97,7 +97,10 @@ public final class MeshSectionBuilder {
                                     clientDelta, range, camera, world, clientLevel)));
                     sections = built.getFirst();
                 } catch (Throwable e) {
-                    LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
+                    if (!mesh.failureLogged) {
+                        mesh.failureLogged = true;
+                        LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
+                    }
                 }
                 if (full) {
                     collector.complete(sections);

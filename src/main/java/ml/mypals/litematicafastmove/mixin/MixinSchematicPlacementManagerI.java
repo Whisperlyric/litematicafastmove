@@ -91,11 +91,8 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
         }
     }
 
-    @Inject(method = "onToggleMainRendering", at = @At("HEAD"))
-    private void onToggleMainRendering(boolean toggle, CallbackInfo ci) {
-        this.litematicafastmove$commitAll();
-    }
-
+    // 渲染开关不再顺手提交所有待定移动：提交要为整份投影标记区块重建，
+    // 开关一下就会卡一段；待定移动本来就会在停手后由 tick 提交
     @Inject(method = "markAllPlacementsOfSchematicForRebuild", at = @At("HEAD"))
     private void onMarkAllPlacementsOfSchematicForRebuild(LitematicaSchematic schematic, CallbackInfo ci) {
         this.litematicafastmove$commitAll();
@@ -119,15 +116,22 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
             this.chunksPreChange.clear();
             this.chunksPreChange.addAll(state.baseChunks);
             this.litematicafastmove$committing = true;
+            PendingMoveTracker.beginBulkRebuild();
             try {
                 this.onPostPlacementChange(placement);
             } finally {
+                PendingMoveTracker.endBulkRebuild();
                 this.litematicafastmove$committing = false;
                 this.chunksPreChange.clear();
             }
         }
 
-        this.litematicafastmove$rebuildSkipped();
+        PendingMoveTracker.beginBulkRebuild();
+        try {
+            this.litematicafastmove$rebuildSkipped();
+        } finally {
+            PendingMoveTracker.endBulkRebuild();
+        }
         PlacementMeshManager.markPlacementDirty(placement);
     }
 

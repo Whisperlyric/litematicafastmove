@@ -28,7 +28,7 @@ All options are injected into Litematica's configuration screen under the Generi
 |---|---|---|
 | `fastMoveEnabled` Enable | On | Master switch. When disabled, behavior fully reverts to Litematica's original behavior. |
 | `fastMoveTakeoverAllPlacements` Take over all placements | On | When enabled, all placements use independent meshes for rendering. When disabled, only placements whose volume is at least `Large Placement Volume` are taken over; smaller ones continue to be rendered by Litematica. |
-| `fastMoveLargePlacementVolume` Large placement volume | 32768 (32³) | Placements whose volume (length × width × height) reaches this value defer rewriting the placement world while being moved continuously, and commit the new position after movement stops. When `Take Over All Placements` is disabled, this also determines which placements are taken over. |
+| `fastMoveLargePlacementVolume` Large placement volume | 1000000 | Placements whose volume (length × width × height) reaches this value defer rewriting the placement world while being moved continuously, and commit the new position after movement stops. When `Take Over All Placements` is disabled, this also determines which placements are taken over. |
 | `fastMoveAsyncVerifier` Multithreaded verifier | On | Clicking Schematic Verifier performs a multithreaded scan directly against the placement data without going through the placement world. Results are displayed in Litematica's normal verification UI. |
 
 ### Movement
@@ -39,6 +39,20 @@ All options are injected into Litematica's configuration screen under the Generi
 | `fastMoveRenderDelay` Render delay (ms) | 0 | After a placement starts moving, keep it at its original position for this long before rendering it at the new position. Moving again during the wait resets the timer, so intermediate positions during dragging are never rendered, and the corresponding rebuilds are skipped as well. Useful for dragging extremely large placements. |
 | `fastMoveSmoothing` Movement smoothing (ms) | 60 | Time constant for movement interpolation. Higher values produce smoother movement but make the placement feel more "laggy"; set to 0 to disable interpolation and jump directly to the new position. |
 | `fastMoveSnapDistance` Snap distance (blocks) | 128 | When a single movement exceeds this distance, interpolation is skipped and the placement immediately snaps to the new position, preventing it from sliding all the way across the world. |
+| `fastMoveMoveCoreChunks` Move core radius (chunks) | 1 | While a placement is being dragged, only the sections within this many chunks around the player are rebuilt; the rest waits until you let go and is then filled in by view distance. `0` rebuilds nothing during a move. |
+
+### Streaming
+
+Placement meshes are built in the background and applied section by section: the sections nearest the camera come
+first, so a placement appears progressively instead of only once the whole mesh is ready. Sections further than
+1.5× the render distance are dropped again, which bounds what a very large placement can take.
+
+| Option | Default | Description |
+|---|---|---|
+| `fastMoveStreamSectionsPerFrame` Stream sections per frame | 96 | Sections submitted for building per frame. Lower values keep frame times steadier, but the mesh appears more slowly. |
+| `fastMoveStreamInFlight` Sections in flight | 1024 | Hard cap on how many sections may be building at the same time. |
+| `fastMoveResidentLimit` Resident section limit | 0 (unlimited) | Sections kept on the GPU. `0` keeps everything that is in view; with a limit, sections past it are not built, so distant parts of a big placement stay missing. |
+| `fastMoveStreamOnlyLarge` Stream large placements only | On | Only placements whose volume is at least `Large Placement Volume` are streamed; smaller ones keep the one-shot build. Turning it off streams every taken-over placement. |
 
 ### Performance Budgets
 
