@@ -43,7 +43,7 @@ final class PlacementMesh {
     }
     // clientEmpty：构建时对应的真实世界区域 (外扩 1 格) 全是空气
     // blockEntities：需要显示的方块实体位置 (构建坐标，BlockPos.asLong)，交给 Litematica 登记渲染
-    record CpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<CpuLayer> layers, long[] blockEntities) {}
+    record CpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<CpuLayer> layers, long[] blockEntities, boolean missingOnly) {}
 
     static final class SortInfo {
         final MeshData.SortState state;
@@ -73,7 +73,7 @@ final class PlacementMesh {
         }
     }
     // hasBlocks：区段内有投影方块，即使被层范围裁空也保留，范围变化时据此判断是否重建
-    record GpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<GpuLayer> layers, long[] blockEntities) {
+    record GpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<GpuLayer> layers, long[] blockEntities, boolean missingOnly) {
         void close() {
             for (GpuLayer layer : this.layers) {
                 layer.close();
@@ -159,6 +159,8 @@ final class PlacementMesh {
     // 移动中只重建玩家周边这一圈；记录上次刷新时的原点与时间，没动就不重复刷
     BlockPos coreOrigin;
     long coreMillis;
+    // 拖动中：按"全部缺失"重建 (客户端世界当作空的)，与 Litematica 缺失方块完全一致
+    volatile boolean missingMode;
     // 距离环扫描的游标：每帧从上一帧停下的环继续，保证外圈也能轮到
     int ringCursor;
 

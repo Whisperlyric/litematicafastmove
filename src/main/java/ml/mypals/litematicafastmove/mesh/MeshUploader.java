@@ -151,8 +151,6 @@ final class MeshUploader {
 
     private static void activateFull(SchematicPlacement placement, PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer full,
                                      Set<Long> blockEntityChunks) {
-        LitematicaFastMove.LOGGER.debug("Detached placement mesh ready: {} sections (generation {})",
-                full.uploaded.size(), full.generation);
         mesh.active.values().forEach(section -> section.closeExcept(full.borrowed));
         mesh.active.clear();
         full.borrowed.clear();
@@ -234,7 +232,7 @@ final class MeshUploader {
                         indexBuffer, layer.indexType(), sort, vertexBytes, layer.hash()));
             }
             buffer.uploaded.add(new PlacementMesh.GpuSection(section.key(), section.origin(),
-                    section.hasBlocks(), section.clientEmpty(), section.clip(), layers, section.blockEntities()));
+                    section.hasBlocks(), section.clientEmpty(), section.clip(), layers, section.blockEntities(), section.missingOnly()));
         }
     }
 

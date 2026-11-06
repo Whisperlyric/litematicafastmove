@@ -3,8 +3,10 @@ package ml.mypals.litematicafastmove.mesh;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
+import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.sync.MoveInterpolator;
@@ -34,6 +36,7 @@ public final class PlacementMeshManager {
     private static final Set<Long> DIRTY_SCHEMATIC_BLOCKS = ConcurrentHashMap.newKeySet();
     private static final Set<SchematicPlacement> DIRTY_PLACEMENTS = ConcurrentHashMap.newKeySet();
     private static final AtomicInteger GENERATION = new AtomicInteger();
+    private static final Map<SchematicPlacement, Long> REVERIFY_AT = new ConcurrentHashMap<>();
     private static int streamFrames;
     private static double lastCameraX, lastCameraZ;
     private static int idleFrames;
@@ -119,6 +122,7 @@ public final class PlacementMeshManager {
     public static void dispose(SchematicPlacement placement) {
         PlacementMesh mesh = MESHES.remove(placement);
         MoveInterpolator.forget(placement);
+        REVERIFY_AT.remove(placement);
         if (mesh != null) {
             mesh.requestedGeneration = -1;
             MeshUploader.enqueueClose(mesh);
@@ -136,6 +140,7 @@ public final class PlacementMeshManager {
      * 释放已移除或者不再被接管的投影的网格
      */
     public static void tick() {
+        runScheduledReverify();
         var manager = DataManager.getSchematicPlacementManager();
         if (manager == null) return;
 
@@ -152,6 +157,10 @@ public final class PlacementMeshManager {
         }
 
         for (SchematicPlacement placement : all) {
+            PlacementMesh pendingMesh = MESHES.get(placement);
+            if (pendingMesh != null && pendingMesh.missingMode && PendingMoveTracker.get(placement) == null) {
+                markPlacementDirty(placement); // 移动被取消/放弃了，回到正常显示
+            }
             boolean detached = isDetached(placement);
             boolean hasMesh = MESHES.containsKey(placement);
             if (detached && !hasMesh) {
@@ -193,8 +202,22 @@ public final class PlacementMeshManager {
      */
     public static void markPlacementDirty(SchematicPlacement placement) {
         if (placement != null && MESHES.containsKey(placement)) {
+            MESHES.get(placement).missingMode = false;
             DIRTY_PLACEMENTS.add(placement);
         }
+    }
+
+    /**
+     * 拖动开始：之后的重建都把客户端世界当作空的，于是每个方块都按 Litematica 的"缺失"样式画出来，
+     * 落定提交时 {@link #markPlacementDirty} 会清掉这个状态并整份重建
+     */
+    public static void markPlacementMissing(SchematicPlacement placement) {
+        PlacementMesh mesh = MESHES.get(placement);
+        // 只在整个拖动的第一次标一次：每次位移都清 refreshed 会让转换进度永远从头开始
+        if (mesh == null || mesh.missingMode) return;
+        mesh.missingMode = true;
+        mesh.refreshed.clear();
+        mesh.dirty.addAll(mesh.active.keySet());
     }
 
     /**
@@ -251,6 +274,7 @@ public final class PlacementMeshManager {
      * 玩家走动时新区块会不断加载，如果连远处的都重建，就会持续吃 CPU 掉帧
      */
     private static void invalidateSections(PlacementMesh mesh, BlockPos delta, Set<Long> keys) {
+        if (mesh.missingMode) return; // 正在按"缺失"重建，世界的改动不影响结果
         Vec3 camera = Minecraft.getInstance().gameRenderer.getMainCamera().position();
         int distance = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2) * 16;
         double maxDistanceSq = (double) distance * distance;
@@ -301,7 +325,7 @@ public final class PlacementMeshManager {
         idleFrames = movedX * movedX + movedZ * movedZ < 0.0625 ? Math.min(idleFrames + 1, 100) : 0;
         int maxBudget = FastMoveConfig.streamSectionsPerFrame();
         if (idleFrames > 20) {
-            maxBudget = Math.min(512, maxBudget * 2);
+            maxBudget = Math.min(1024, maxBudget * 2);
         }
 
         for (Map.Entry<SchematicPlacement, PlacementMesh> entry : MESHES.entrySet()) {
@@ -339,6 +363,8 @@ public final class PlacementMeshManager {
      */
     private static void refreshMoveCore(SchematicPlacement placement, PlacementMesh mesh, double cameraX, double cameraZ) {
         if (PendingMoveTracker.get(placement) == null) return;
+        // 拖动中整份按"缺失"画，内容与真实世界无关，重建核心只是白白丢进度
+        if (mesh.missingMode) return;
 
         int radius = FastMoveConfig.moveCoreChunks();
         if (radius <= 0) return;
@@ -385,7 +411,8 @@ public final class PlacementMeshManager {
 
         // 脏区段最多占一半预算：走动时新区块会不断标脏，如果让它们吃掉整份预算，
         // 距离环扫描永远轮不到，外面那一圈就永远建不出来
-        int dirtyBudget = Math.max(4, budget / 2);
+        // 拖动转换期间全部预算都用来重建"缺失"，不再给距离环留一半
+        int dirtyBudget = mesh.missingMode ? budget : Math.max(4, budget / 2);
         int dirtyUsed = 0;
         var dirty = mesh.dirty.iterator();
         while (dirty.hasNext() && budget > 0 && dirtyUsed < dirtyBudget) {
@@ -398,7 +425,8 @@ public final class PlacementMeshManager {
         }
 
         if (budget > 0) {
-            int radius = Minecraft.getInstance().options.getEffectiveRenderDistance() + 2;
+            // 比绘制半径多 2 个区块：玩家走进新区块时那边已经建好了
+            int radius = Minecraft.getInstance().options.getEffectiveRenderDistance() + 4;
             // 区段坐标是构建坐标，相机是世界坐标：投影平移过之后必须减掉 delta，
             // 否则扫的是错位的区块列 (缺的那一块正好偏出一个移动距离)
             BlockPos offset = placement.getOrigin().subtract(mesh.targetBuildOrigin);
@@ -566,4 +594,30 @@ public final class PlacementMeshManager {
         });
         MeshDebugGizmos.sectionsSkipped(accessor, skipped, delta);
     }
-}
+
+    /** 移动落定后重跑一次验证；延迟一会儿，等投影世界重写追上 */
+    public static void scheduleReverify(SchematicPlacement placement) {
+        if (placement == null || !placement.hasVerifier()) return;
+        REVERIFY_AT.put(placement, System.currentTimeMillis() + 1000);
+    }
+
+    private static void runScheduledReverify() {
+        if (REVERIFY_AT.isEmpty()) return;
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+        WorldSchematic world = SchematicWorldHandler.getSchematicWorld();
+        if (clientLevel == null || world == null) return;
+
+        long now = System.currentTimeMillis();
+        for (Map.Entry<SchematicPlacement, Long> entry : REVERIFY_AT.entrySet()) {
+            if (now < entry.getValue()) continue;
+            if (!REVERIFY_AT.remove(entry.getKey(), entry.getValue())) continue;
+            SchematicPlacement placement = entry.getKey();
+            SchematicVerifier verifier = placement.getSchematicVerifier();
+            if (verifier == null || verifier.isActive()) continue;
+            try {
+                verifier.startVerification(clientLevel, world, placement, null);
+            } catch (Throwable e) {
+                LitematicaFastMove.LOGGER.warn("Failed to restart schematic verification for '{}'", placement.getName(), e);
+            }
+        }
+    }}
