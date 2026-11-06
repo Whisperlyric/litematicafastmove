@@ -275,7 +275,7 @@ public final class MeshSectionBuilder {
                                 if (schematicAir && (clientAir || !accessor.isInAnyRegion(x, y, z))) continue;
 
                                 boolean missing = false;
-                                if (!schematicAir && !missingMode && (clientAir || (renderColliding && clientState != state))) {
+                                if (!schematicAir && (clientAir || (renderColliding && clientState != state))) {
                                     tessellate(view, state, pos, blockRenderer, fluidRenderer, blockOutput, fluidOutput, renderFluids);
                                     if (state.hasBlockEntity()) {
                                         blockEntities.add(BlockPos.asLong(x, y, z));
